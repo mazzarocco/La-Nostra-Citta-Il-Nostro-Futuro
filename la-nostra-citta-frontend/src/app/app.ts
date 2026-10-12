@@ -8,16 +8,10 @@ import { LoginComponent } from './components/login/login';
   standalone: true,
   imports: [CommonModule, DashboardComponent, LoginComponent],
   template: `
-    <div style="max-width: 800px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bottom: 20px;">
-        <h1 style="margin: 0; color: #333;">La Nostra Città, Il Nostro Futuro</h1>
-        <button *ngIf="isLoggedIn" (click)="logout()" style="padding: 8px 15px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
-          Esci
-        </button>
-      </div>
-
-      <app-login *ngIf="!isLoggedIn"></app-login>
-      <app-dashboard *ngIf="isLoggedIn"></app-dashboard>
+    <div class="shell">
+      <header class="site-header"><a class="brand" href="/" aria-label="La Nostra Città, home"><span class="brand-mark">LC</span><span>La Nostra Città<small>Il nostro futuro</small></span></a><button *ngIf="isLoggedIn" class="logout" (click)="logout()">Esci</button></header>
+      <main><app-login *ngIf="!isLoggedIn"></app-login><app-dashboard *ngIf="isLoggedIn"></app-dashboard></main>
+      <footer>Una piattaforma civica per Milano · Accessibile, trasparente, partecipata</footer>
     </div>
   `,
 })

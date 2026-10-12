@@ -111,3 +111,5 @@ export class InserisciSegnalazioneComponent {
     }
   }
 }
+
+export { InserisciSegnalazioneComponent as InserisciSegnalazione };
