@@ -1,3 +1,4 @@
+
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "angular",
@@ -5,8 +6,13 @@
   "outputDirectory": "dist/la-nostra-citta-frontend/browser",
   "rewrites": [
     {
+      "source": "/api/:path*",
+      "destination": "https://la-nostra-citta-il-nostro-futuro-nh.vercel.app/api/:path*"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
 }
+  
