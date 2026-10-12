@@ -3,6 +3,7 @@ import datetime
 import uuid
 from functools import wraps
 from flask import Flask, request, jsonify
+import boto3
 import mysql.connector
 from mysql.connector import Error
 import jwt
@@ -15,9 +16,68 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
-app.config['SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'chiave_segreta_default')
-app.config['UPLOAD_FOLDER'] = 'uploads'
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+IS_PRODUCTION = os.environ.get('APP_ENV', '').lower() == 'production' or os.environ.get('VERCEL') == '1'
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY')
+if IS_PRODUCTION and not JWT_SECRET_KEY:
+    raise RuntimeError('JWT_SECRET_KEY e obbligatoria in produzione')
+app.config['SECRET_KEY'] = JWT_SECRET_KEY or 'chiave_segreta_solo_sviluppo'
+
+STORAGE_BUCKET = os.environ.get('STORAGE_BUCKET')
+STORAGE_ENDPOINT_URL = os.environ.get('STORAGE_ENDPOINT_URL')
+STORAGE_REGION = os.environ.get('STORAGE_REGION', 'us-east-1')
+STORAGE_ACCESS_KEY_ID = os.environ.get('STORAGE_ACCESS_KEY_ID')
+STORAGE_SECRET_ACCESS_KEY = os.environ.get('STORAGE_SECRET_ACCESS_KEY')
+STORAGE_CONFIGURED = all((
+    STORAGE_BUCKET,
+    STORAGE_ACCESS_KEY_ID,
+    STORAGE_SECRET_ACCESS_KEY,
+))
+if IS_PRODUCTION and not STORAGE_CONFIGURED:
+    raise RuntimeError(
+        'Storage privato non configurato: servono STORAGE_BUCKET, '
+        'STORAGE_ACCESS_KEY_ID e STORAGE_SECRET_ACCESS_KEY'
+    )
+
+storage_client = None
+if STORAGE_CONFIGURED:
+    storage_client = boto3.client(
+        's3',
+        endpoint_url=STORAGE_ENDPOINT_URL or None,
+        region_name=STORAGE_REGION,
+        aws_access_key_id=STORAGE_ACCESS_KEY_ID,
+        aws_secret_access_key=STORAGE_SECRET_ACCESS_KEY,
+    )
+
+
+def upload_private_file(file_storage, folder, object_name=None):
+    """Upload a file to a private bucket and return its object key and size."""
+    if storage_client is None or not STORAGE_BUCKET:
+        raise RuntimeError('Storage privato non configurato')
+
+    original_name = secure_filename(file_storage.filename or '')
+    extension = os.path.splitext(original_name)[1].lower()
+    object_name = object_name or f'{uuid.uuid4().hex}{extension}'
+    object_key = f'{folder}/{object_name}'
+    file_storage.stream.seek(0, os.SEEK_END)
+    file_size = file_storage.stream.tell()
+    file_storage.stream.seek(0)
+    storage_client.upload_fileobj(
+        file_storage.stream,
+        STORAGE_BUCKET,
+        object_key,
+        ExtraArgs={'ContentType': file_storage.mimetype or 'application/octet-stream'},
+    )
+    return object_key, file_size
+
+
+def delete_private_files(object_keys):
+    if storage_client is None or not STORAGE_BUCKET:
+        return
+    for object_key in object_keys:
+        try:
+            storage_client.delete_object(Bucket=STORAGE_BUCKET, Key=object_key)
+        except Exception as error:
+            app.logger.warning("Impossibile eliminare l'oggetto storage %s: %s", object_key, error)
 
 
 @app.route('/', methods=['GET'])
@@ -42,6 +102,11 @@ DB_CONFIG = {
 
 if os.environ.get('DB_SSL_CA'):
     DB_CONFIG['ssl_ca'] = os.environ['DB_SSL_CA']
+elif os.environ.get('DB_SSL_CA_CONTENT'):
+    db_ssl_ca_path = '/tmp/aiven-ca.pem'
+    with open(db_ssl_ca_path, 'w', encoding='utf-8') as certificate_file:
+        certificate_file.write(os.environ['DB_SSL_CA_CONTENT'])
+    DB_CONFIG['ssl_ca'] = db_ssl_ca_path
 
 def get_db_connection():
     try:
@@ -109,18 +174,21 @@ def registrazione():
         return jsonify({"errore": "Per registrarti devi essere maggiorenne"}), 400
     if fronte.mimetype not in {'image/jpeg', 'image/png', 'image/webp'} or retro.mimetype not in {'image/jpeg', 'image/png', 'image/webp'}:
         return jsonify({"errore": "I documenti devono essere immagini JPG, PNG o WEBP"}), 400
+    if storage_client is None:
+        return jsonify({"errore": "Storage documenti non configurato"}), 503
 
     nomi_documenti = []
-    for documento in (fronte, retro):
-        estensione = os.path.splitext(secure_filename(documento.filename))[1].lower()
-        nome_file = f"{uuid.uuid4().hex}{estensione}"
-        documento.save(os.path.join(app.config['UPLOAD_FOLDER'], nome_file))
-        nomi_documenti.append(nome_file)
+    try:
+        for documento in (fronte, retro):
+            nome_file, _ = upload_private_file(documento, 'documenti-identita')
+            nomi_documenti.append(nome_file)
+    except Exception:
+        delete_private_files(nomi_documenti)
+        return jsonify({"errore": "Salvataggio dei documenti non riuscito"}), 503
 
     conn = get_db_connection()
     if conn is None:
-        for nome_file in nomi_documenti:
-            os.remove(os.path.join(app.config['UPLOAD_FOLDER'], nome_file))
+        delete_private_files(nomi_documenti)
         return jsonify({"errore": "Database non disponibile"}), 503
 
     cursor = conn.cursor()
@@ -136,13 +204,11 @@ def registrazione():
         conn.commit()
         return jsonify({"messaggio": "Registrazione completata. Attendi la verifica dell'account."}), 201
     except mysql.connector.IntegrityError:
-        for nome_file in nomi_documenti:
-            os.remove(os.path.join(app.config['UPLOAD_FOLDER'], nome_file))
+        delete_private_files(nomi_documenti)
         return jsonify({"errore": "Email già in uso"}), 409
     except Exception:
         conn.rollback()
-        for nome_file in nomi_documenti:
-            os.remove(os.path.join(app.config['UPLOAD_FOLDER'], nome_file))
+        delete_private_files(nomi_documenti)
         return jsonify({"errore": "Registrazione non completata"}), 400
     finally:
         cursor.close()
@@ -199,12 +265,17 @@ def crea_segnalazione(current_user):
     nome_file = secure_filename(file.filename)
     if not nome_file:
         return jsonify({"errore": "Nome allegato non valido"}), 400
+    if storage_client is None:
+        return jsonify({"errore": "Storage allegati non configurato"}), 503
     nome_file = f"{uuid.uuid4().hex}_{nome_file}"
-    percorso = os.path.join(app.config['UPLOAD_FOLDER'], nome_file)
-    file.save(percorso)
+    try:
+        percorso, dimensione_bytes = upload_private_file(file, 'allegati', nome_file)
+    except Exception:
+        return jsonify({"errore": "Salvataggio dell'allegato non riuscito"}), 503
 
     conn = get_db_connection()
     if conn is None:
+        delete_private_files([percorso])
         return jsonify({"errore": "Database non disponibile"}), 503
 
     cursor = conn.cursor()
@@ -213,12 +284,13 @@ def crea_segnalazione(current_user):
                        (titolo, descrizione, current_user['id_utente'], id_quartiere))
         id_seg = cursor.lastrowid
         cursor.execute("INSERT INTO allegato (nome_file, percorso_file, tipo_mime, tipo_media, dimensione_bytes, id_segnalazione) VALUES (%s, %s, %s, %s, %s, %s)",
-                       (nome_file, percorso, file.mimetype, 'IMMAGINE' if 'image' in file.mimetype else 'VIDEO', os.path.getsize(percorso), id_seg))
+                       (nome_file, percorso, file.mimetype, 'IMMAGINE' if 'image' in file.mimetype else 'VIDEO', dimensione_bytes, id_seg))
         registra_attivita(conn, current_user['id_utente'], 'CREAZIONE_SEGNALAZIONE', 'SEGNALAZIONE', id_seg)
         conn.commit()
         return jsonify({"id_segnalazione": id_seg}), 201
     except Exception as e:
         conn.rollback()
+        delete_private_files([percorso])
         return jsonify({"errore": str(e)}), 400
     finally:
         cursor.close()
