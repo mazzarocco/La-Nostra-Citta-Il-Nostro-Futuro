@@ -50,8 +50,12 @@ export interface RegistrazioneDati {
   indirizzo_residenza: string;
   data_nascita: string;
   password: string;
-  documento_fronte: File;
-  documento_retro: File;
+}
+
+export interface NuovaSegnalazione {
+  titolo: string;
+  descrizione: string;
+  id_quartiere: number;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -71,12 +75,12 @@ export class Api {
     return this.http.post<LoginResponse>(`${this.baseUrl}/login`, credentials);
   }
 
-  registrati(dati: FormData): Observable<{ messaggio: string }> {
+  registrati(dati: RegistrazioneDati): Observable<{ messaggio: string }> {
     return this.http.post<{ messaggio: string }>(`${this.baseUrl}/registrazione`, dati);
   }
 
-  inviaSegnalazione(formData: FormData): Observable<{ id_segnalazione: number }> {
-    return this.http.post<{ id_segnalazione: number }>(`${this.baseUrl}/segnalazioni`, formData);
+  inviaSegnalazione(dati: NuovaSegnalazione): Observable<{ id_segnalazione: number }> {
+    return this.http.post<{ id_segnalazione: number }>(`${this.baseUrl}/segnalazioni`, dati);
   }
 
   sostieniSegnalazione(id: number): Observable<{ success: boolean; id: number }> {
@@ -132,14 +136,6 @@ export class Api {
 
   eliminaCommento(id: number): Observable<{ messaggio: string }> {
     return this.http.delete<{ messaggio: string }>(`${this.baseUrl}/commenti/${id}`);
-  }
-
-  getUtentiInVerifica(): Observable<Profilo[]> {
-    return this.http.get<Profilo[]>(`${this.baseUrl}/comitato/utenti-in-verifica`);
-  }
-
-  verificaUtente(id: number, stato: 'ATTIVO' | 'RIFIUTATO'): Observable<{ messaggio: string }> {
-    return this.http.post<{ messaggio: string }>(`${this.baseUrl}/comitato/utenti/${id}/verifica`, { stato });
   }
 
   analizzaSegnalazione(id: number): Observable<{ categoria: string; indice_urgenza: number; nota: string }> {

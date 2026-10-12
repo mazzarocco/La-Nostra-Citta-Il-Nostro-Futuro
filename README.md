@@ -12,7 +12,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Configura `.env` con `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` e `JWT_SECRET_KEY`.
+2. Configura `.env` con `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` e `JWT_SECRET_KEY`. Non sono richieste variabili `STORAGE_*`: il progetto non usa S3, R2 o altri bucket.
 3. Inizializza il database eseguendo `schema.sql` su MySQL:
 
 ```bash
@@ -40,14 +40,9 @@ DB_USER=<utente MySQL Aiven>
 DB_PASSWORD=<password MySQL Aiven>
 DB_NAME=<database MySQL Aiven>
 DB_SSL_CA_CONTENT=<certificato CA Aiven completo>
-STORAGE_BUCKET=<bucket privato S3-compatibile>
-STORAGE_ENDPOINT_URL=<endpoint dello storage>
-STORAGE_REGION=<regione dello storage>
-STORAGE_ACCESS_KEY_ID=<chiave storage>
-STORAGE_SECRET_ACCESS_KEY=<segreto storage>
 ```
 
-I documenti d'identita, le immagini e i video vengono salvati nel bucket privato e nel database vengono memorizzate solo le chiavi degli oggetti. Non usare `uploads/` su Vercel per la persistenza: il filesystem delle funzioni e temporaneo. Il bucket deve restare privato e i documenti devono essere letti solo tramite un futuro endpoint autenticato con URL firmati.
+Le registrazioni e le segnalazioni non richiedono allegati. I documenti d'identita non vengono richiesti, salvati o verificati in questa versione dimostrativa.
 
 ## Avvio frontend
 
@@ -59,12 +54,12 @@ npm start
 
 Apri `http://localhost:4200`.
 
-## Verifica account
+## Account dimostrativi
 
-Le nuove registrazioni vengono salvate come `IN_VERIFICA`. Un membro autorizzato deve portare l'account a `ATTIVO` prima del login, ad esempio tramite SQL:
+Le nuove registrazioni vengono create direttamente come `ATTIVO`, quindi si puo effettuare il login subito dopo la registrazione. Questa versione non verifica l'identita degli utenti: non usare il flusso dimostrativo in produzione senza aggiungere un'autenticazione adeguata.
 
-```sql
-UPDATE utente SET stato_account = 'ATTIVO' WHERE email = 'cittadino@example.com';
-```
+## Migrazione database esistente
 
-Le immagini dei documenti restano nella cartella `uploads/` e non sono esposte dalle API pubbliche.
+Se il database Aiven e gia stato creato con i documenti obbligatori, applica una sola volta [sql/20261012_rimuovi_obbligo_documenti.sql](sql/20261012_rimuovi_obbligo_documenti.sql). La migrazione modifica solo la nullabilita delle due colonne e lo stato predefinito; non elimina tabelle o dati.
+
+La tabella `allegato` puo restare nel database per compatibilita con dati storici, ma la creazione delle nuove segnalazioni non la usa. La vista `v_segnalazioni_pubbliche` e le tabelle `quartiere`, `stato_segnalazione`, `sostegno`, `commento` e `log_attivita` sono definite in `schema.sql` e usate da `app.py`.

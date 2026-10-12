@@ -27,8 +27,7 @@ import { InserisciSegnalazioneComponent } from '../inserisci-segnalazione/inseri
         <div *ngIf="commentiAperti === seg.id_segnalazione" class="comments"><div *ngFor="let commento of commenti" class="comment"><strong>{{ commento.autore }}</strong><span>{{ commento.testo }}</span><button *ngIf="commento.id_utente === profilo?.id_utente || ruolo === 'COMITATO'" class="comment-action" (click)="eliminaCommento(commento.id_commento, seg.id_segnalazione)" aria-label="Elimina commento">Elimina</button></div><label>Nuovo commento<textarea [(ngModel)]="nuovoCommento" rows="2"></textarea></label><button (click)="commenta(seg.id_segnalazione)">Pubblica commento</button></div>
       </article>
     </section>
-    <section *ngIf="vista === 'comitato'" class="verification"><h2>Account da verificare</h2><p *ngIf="utentiInVerifica.length === 0">Nessun account in attesa.</p><div *ngFor="let utente of utentiInVerifica" class="verification-row"><span><strong>{{ utente.nome }} {{ utente.cognome }}</strong><small>{{ utente.email }}</small></span><button (click)="verifica(utente.id_utente, 'ATTIVO')">Approva</button><button class="danger" (click)="verifica(utente.id_utente, 'RIFIUTATO')">Rifiuta</button></div></section>
-    <section *ngIf="vista === 'profilo'" class="profile"><h2>Il tuo profilo</h2><p *ngIf="profilo">Account verificato: {{ profilo.stato_account }}</p><label>Nome<input [(ngModel)]="modifica.nome"></label><label>Cognome<input [(ngModel)]="modifica.cognome"></label><label>Indirizzo di residenza<input [(ngModel)]="modifica.indirizzo_residenza"></label><p class="privacy">Email e codice fiscale restano privati e non sono modificabili da questa pagina.</p><button (click)="salvaProfilo()">Salva modifiche</button><button class="danger" (click)="eliminaAccount()">Elimina account</button></section>
+    <section *ngIf="vista === 'profilo'" class="profile"><h2>Il tuo profilo</h2><p *ngIf="profilo">Stato account: {{ profilo.stato_account }}</p><label>Nome<input [(ngModel)]="modifica.nome"></label><label>Cognome<input [(ngModel)]="modifica.cognome"></label><label>Indirizzo di residenza<input [(ngModel)]="modifica.indirizzo_residenza"></label><p class="privacy">Email e codice fiscale restano privati e non sono modificabili da questa pagina.</p><button (click)="salvaProfilo()">Salva modifiche</button><button class="danger" (click)="eliminaAccount()">Elimina account</button></section>
   `,
 })
 export class DashboardComponent implements OnInit {
@@ -44,7 +43,6 @@ export class DashboardComponent implements OnInit {
   vista = 'home';
   ruolo = typeof localStorage === 'undefined' ? '' : localStorage.getItem('user_role') ?? '';
   messaggio = '';
-  utentiInVerifica: Profilo[] = [];
   editingId: number | null = null;
   editTitolo = '';
   editDescrizione = '';
@@ -58,7 +56,6 @@ export class DashboardComponent implements OnInit {
     this.api.getMieSegnalazioni().subscribe({ next: dati => this.mie = dati });
     this.api.getMieiVoti().subscribe({ next: dati => this.voti = dati });
     if (this.ruolo === 'COMITATO') this.api.getSegnalazioniComitato().subscribe({ next: dati => this.comitato = dati });
-    if (this.ruolo === 'COMITATO') this.api.getUtentiInVerifica().subscribe({ next: dati => this.utentiInVerifica = dati });
   }
 
   get titoloVista(): string { return this.vista === 'mie' ? 'Le mie proposte' : this.vista === 'voti' ? 'Proposte sostenute' : this.vista === 'comitato' ? 'Controllo del comitato' : 'Segnalazioni della comunità'; }
@@ -89,7 +86,6 @@ export class DashboardComponent implements OnInit {
   modificaSegnalazione(segnalazione: Segnalazione): void { this.editingId = segnalazione.id_segnalazione; this.editTitolo = segnalazione.titolo; this.editDescrizione = segnalazione.descrizione; }
   salvaModifica(id: number): void { this.api.aggiornaSegnalazione(id, { titolo: this.editTitolo, descrizione: this.editDescrizione }).subscribe({ next: () => { this.editingId = null; this.messaggio = 'Proposta aggiornata.'; this.caricaSegnalazioni(); this.api.getMieSegnalazioni().subscribe({ next: dati => this.mie = dati }); } }); }
   analizza(id: number): void { this.api.analizzaSegnalazione(id).subscribe({ next: risultato => this.analisi = { ...this.analisi, [id]: risultato }, error: () => this.messaggio = 'Analisi non disponibile.' }); }
-  verifica(id: number, stato: 'ATTIVO' | 'RIFIUTATO'): void { this.api.verificaUtente(id, stato).subscribe({ next: response => { this.messaggio = response.messaggio; this.utentiInVerifica = this.utentiInVerifica.filter(utente => utente.id_utente !== id); } }); }
   eliminaCommento(id: number, segnalazioneId: number): void { this.api.eliminaCommento(id).subscribe({ next: () => this.apriCommenti(segnalazioneId) }); }
   salvaProfilo(): void { this.api.aggiornaProfilo(this.modifica).subscribe({ next: response => this.messaggio = response.messaggio }); }
   eliminaAccount(): void { if (!confirm('Eliminare definitivamente il tuo account?')) return; this.api.eliminaAccount().subscribe({ next: () => { localStorage.clear(); window.location.reload(); } }); }

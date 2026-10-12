@@ -1,13 +1,10 @@
 import os
 import datetime
-import uuid
 from functools import wraps
 from flask import Flask, request, jsonify
-import boto3
 import mysql.connector
 from mysql.connector import Error
 import jwt
-from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -21,63 +18,6 @@ JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY')
 if IS_PRODUCTION and not JWT_SECRET_KEY:
     raise RuntimeError('JWT_SECRET_KEY e obbligatoria in produzione')
 app.config['SECRET_KEY'] = JWT_SECRET_KEY or 'chiave_segreta_solo_sviluppo'
-
-STORAGE_BUCKET = os.environ.get('STORAGE_BUCKET')
-STORAGE_ENDPOINT_URL = os.environ.get('STORAGE_ENDPOINT_URL')
-STORAGE_REGION = os.environ.get('STORAGE_REGION', 'us-east-1')
-STORAGE_ACCESS_KEY_ID = os.environ.get('STORAGE_ACCESS_KEY_ID')
-STORAGE_SECRET_ACCESS_KEY = os.environ.get('STORAGE_SECRET_ACCESS_KEY')
-STORAGE_CONFIGURED = all((
-    STORAGE_BUCKET,
-    STORAGE_ACCESS_KEY_ID,
-    STORAGE_SECRET_ACCESS_KEY,
-))
-if IS_PRODUCTION and not STORAGE_CONFIGURED:
-    raise RuntimeError(
-        'Storage privato non configurato: servono STORAGE_BUCKET, '
-        'STORAGE_ACCESS_KEY_ID e STORAGE_SECRET_ACCESS_KEY'
-    )
-
-storage_client = None
-if STORAGE_CONFIGURED:
-    storage_client = boto3.client(
-        's3',
-        endpoint_url=STORAGE_ENDPOINT_URL or None,
-        region_name=STORAGE_REGION,
-        aws_access_key_id=STORAGE_ACCESS_KEY_ID,
-        aws_secret_access_key=STORAGE_SECRET_ACCESS_KEY,
-    )
-
-
-def upload_private_file(file_storage, folder, object_name=None):
-    """Upload a file to a private bucket and return its object key and size."""
-    if storage_client is None or not STORAGE_BUCKET:
-        raise RuntimeError('Storage privato non configurato')
-
-    original_name = secure_filename(file_storage.filename or '')
-    extension = os.path.splitext(original_name)[1].lower()
-    object_name = object_name or f'{uuid.uuid4().hex}{extension}'
-    object_key = f'{folder}/{object_name}'
-    file_storage.stream.seek(0, os.SEEK_END)
-    file_size = file_storage.stream.tell()
-    file_storage.stream.seek(0)
-    storage_client.upload_fileobj(
-        file_storage.stream,
-        STORAGE_BUCKET,
-        object_key,
-        ExtraArgs={'ContentType': file_storage.mimetype or 'application/octet-stream'},
-    )
-    return object_key, file_size
-
-
-def delete_private_files(object_keys):
-    if storage_client is None or not STORAGE_BUCKET:
-        return
-    for object_key in object_keys:
-        try:
-            storage_client.delete_object(Bucket=STORAGE_BUCKET, Key=object_key)
-        except Exception as error:
-            app.logger.warning("Impossibile eliminare l'oggetto storage %s: %s", object_key, error)
 
 
 @app.route('/', methods=['GET'])
@@ -151,7 +91,7 @@ def token_required(f):
 # --- 1. REGISTRAZIONE ---
 @app.route('/api/registrazione', methods=['POST'])
 def registrazione():
-    data = request.form
+    data = request.get_json(silent=True) or request.form
     nome = data.get('nome', '').strip()
     cognome = data.get('cognome', '').strip()
     email = data.get('email', '').strip().lower()
@@ -159,11 +99,9 @@ def registrazione():
     indirizzo = data.get('indirizzo_residenza', '').strip()
     data_nascita = data.get('data_nascita', '').strip()
     pwd = data.get('password', '')
-    fronte = request.files.get('documento_fronte')
-    retro = request.files.get('documento_retro')
 
-    if not all([nome, cognome, email, codice_fiscale, indirizzo, data_nascita, pwd, fronte, retro]):
-        return jsonify({"errore": "Tutti i dati e i documenti sono obbligatori"}), 400
+    if not all([nome, cognome, email, codice_fiscale, indirizzo, data_nascita, pwd]):
+        return jsonify({"errore": "Tutti i dati sono obbligatori"}), 400
     try:
         nascita = datetime.date.fromisoformat(data_nascita)
     except ValueError:
@@ -172,23 +110,9 @@ def registrazione():
     eta = oggi.year - nascita.year - ((oggi.month, oggi.day) < (nascita.month, nascita.day))
     if nascita > oggi or eta < 18:
         return jsonify({"errore": "Per registrarti devi essere maggiorenne"}), 400
-    if fronte.mimetype not in {'image/jpeg', 'image/png', 'image/webp'} or retro.mimetype not in {'image/jpeg', 'image/png', 'image/webp'}:
-        return jsonify({"errore": "I documenti devono essere immagini JPG, PNG o WEBP"}), 400
-    if storage_client is None:
-        return jsonify({"errore": "Storage documenti non configurato"}), 503
-
-    nomi_documenti = []
-    try:
-        for documento in (fronte, retro):
-            nome_file, _ = upload_private_file(documento, 'documenti-identita')
-            nomi_documenti.append(nome_file)
-    except Exception:
-        delete_private_files(nomi_documenti)
-        return jsonify({"errore": "Salvataggio dei documenti non riuscito"}), 503
 
     conn = get_db_connection()
     if conn is None:
-        delete_private_files(nomi_documenti)
         return jsonify({"errore": "Database non disponibile"}), 503
 
     cursor = conn.cursor()
@@ -196,19 +120,17 @@ def registrazione():
         cursor.execute("""INSERT INTO utente
             (nome, cognome, email, codice_fiscale, indirizzo_residenza, data_nascita,
              password, documento_fronte, documento_retro, stato_account)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'IN_VERIFICA')""",
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, NULL, 'ATTIVO')""",
             (nome, cognome, email, codice_fiscale, indirizzo, nascita,
-             generate_password_hash(pwd), nomi_documenti[0], nomi_documenti[1]))
+             generate_password_hash(pwd)))
         conn.commit()
         registra_attivita(conn, cursor.lastrowid, 'REGISTRAZIONE')
         conn.commit()
-        return jsonify({"messaggio": "Registrazione completata. Attendi la verifica dell'account."}), 201
+        return jsonify({"messaggio": "Registrazione completata. Ora puoi effettuare il login."}), 201
     except mysql.connector.IntegrityError:
-        delete_private_files(nomi_documenti)
         return jsonify({"errore": "Email già in uso"}), 409
     except Exception:
         conn.rollback()
-        delete_private_files(nomi_documenti)
         return jsonify({"errore": "Registrazione non completata"}), 400
     finally:
         cursor.close()
@@ -255,27 +177,15 @@ def login():
 @app.route('/api/segnalazioni', methods=['POST'])
 @token_required
 def crea_segnalazione(current_user):
-    titolo, descrizione, id_quartiere = request.form.get('titolo'), request.form.get('descrizione'), request.form.get('id_quartiere')
-    if 'allegato' not in request.files or not all([titolo, descrizione, id_quartiere]):
-        return jsonify({"errore": "Dati o allegato mancanti"}), 400
-
-    file = request.files['allegato']
-    if file.mimetype not in {'image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime'}:
-        return jsonify({"errore": "L'allegato deve essere una foto o un video valido"}), 400
-    nome_file = secure_filename(file.filename)
-    if not nome_file:
-        return jsonify({"errore": "Nome allegato non valido"}), 400
-    if storage_client is None:
-        return jsonify({"errore": "Storage allegati non configurato"}), 503
-    nome_file = f"{uuid.uuid4().hex}_{nome_file}"
-    try:
-        percorso, dimensione_bytes = upload_private_file(file, 'allegati', nome_file)
-    except Exception:
-        return jsonify({"errore": "Salvataggio dell'allegato non riuscito"}), 503
+    data = request.get_json(silent=True) or {}
+    titolo = str(data.get('titolo', '')).strip()
+    descrizione = str(data.get('descrizione', '')).strip()
+    id_quartiere = data.get('id_quartiere')
+    if not all([titolo, descrizione, id_quartiere]):
+        return jsonify({"errore": "Titolo, descrizione e quartiere sono obbligatori"}), 400
 
     conn = get_db_connection()
     if conn is None:
-        delete_private_files([percorso])
         return jsonify({"errore": "Database non disponibile"}), 503
 
     cursor = conn.cursor()
@@ -283,14 +193,11 @@ def crea_segnalazione(current_user):
         cursor.execute("INSERT INTO segnalazione (titolo, descrizione, id_autore, id_quartiere, id_stato_corrente) VALUES (%s, %s, %s, %s, 1)",
                        (titolo, descrizione, current_user['id_utente'], id_quartiere))
         id_seg = cursor.lastrowid
-        cursor.execute("INSERT INTO allegato (nome_file, percorso_file, tipo_mime, tipo_media, dimensione_bytes, id_segnalazione) VALUES (%s, %s, %s, %s, %s, %s)",
-                       (nome_file, percorso, file.mimetype, 'IMMAGINE' if 'image' in file.mimetype else 'VIDEO', dimensione_bytes, id_seg))
         registra_attivita(conn, current_user['id_utente'], 'CREAZIONE_SEGNALAZIONE', 'SEGNALAZIONE', id_seg)
         conn.commit()
         return jsonify({"id_segnalazione": id_seg}), 201
     except Exception as e:
         conn.rollback()
-        delete_private_files([percorso])
         return jsonify({"errore": str(e)}), 400
     finally:
         cursor.close()
@@ -505,46 +412,6 @@ def segnalazioni_comitato(current_user):
             LEFT JOIN stato_segnalazione st ON st.id_stato = s.id_stato_corrente
             ORDER BY s.id_segnalazione DESC""")
         return jsonify(cursor.fetchall()), 200
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.route('/api/comitato/utenti-in-verifica', methods=['GET'])
-@token_required
-def utenti_in_verifica(current_user):
-    if current_user.get('ruolo') != 'COMITATO':
-        return jsonify({"errore": "Accesso riservato al comitato"}), 403
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({"errore": "Database non disponibile"}), 503
-    cursor = conn.cursor(dictionary=True)
-    try:
-        cursor.execute("""SELECT id_utente, nome, cognome, email, codice_fiscale,
-            indirizzo_residenza, data_nascita, documento_fronte, documento_retro
-            FROM utente WHERE stato_account = 'IN_VERIFICA'
-            ORDER BY data_creazione ASC""")
-        return jsonify(cursor.fetchall()), 200
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.route('/api/comitato/utenti/<int:id_utente>/verifica', methods=['POST'])
-@token_required
-def verifica_utente(current_user, id_utente):
-    if current_user.get('ruolo') != 'COMITATO':
-        return jsonify({"errore": "Accesso riservato al comitato"}), 403
-    stato = (request.get_json(silent=True) or {}).get('stato')
-    if stato not in {'ATTIVO', 'RIFIUTATO'}:
-        return jsonify({"errore": "Stato di verifica non valido"}), 400
-    conn = get_db_connection()
-    if conn is None:
-        return jsonify({"errore": "Database non disponibile"}), 503
-    cursor = conn.cursor()
-    try:
-        cursor.execute("UPDATE utente SET stato_account = %s WHERE id_utente = %s", (stato, id_utente))
-        registra_attivita(conn, current_user['id_utente'], 'VERIFICA_ACCOUNT', 'UTENTE', id_utente, stato)
-        conn.commit()
-        return jsonify({"messaggio": f"Account {stato.lower()}"}), 200
     finally:
         cursor.close()
         conn.close()

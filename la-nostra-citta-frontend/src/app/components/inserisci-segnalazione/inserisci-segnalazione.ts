@@ -34,11 +34,6 @@ import { Api } from '../../services/api';
         </select>
       </div>
 
-      <div style="margin-bottom: 20px;">
-        <label style="display: block; font-weight: bold; margin-bottom: 5px;">Allegato (Foto/Video obbligatorio):</label>
-        <input type="file" (change)="onFileSelected($event)" accept="image/*,video/*" style="width: 100%;">
-      </div>
-
       <button (click)="invia()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
         Invia Segnalazione
       </button>
@@ -56,37 +51,25 @@ export class InserisciSegnalazioneComponent {
   titolo = '';
   descrizione = '';
   idQuartiere = '';
-  allegato: File | null = null;
-
   messaggio = '';
   successo = false;
 
   constructor(private readonly api: Api) {}
 
-  onFileSelected(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (file) {
-      this.allegato = file;
-    }
-  }
-
   invia(): void {
     this.messaggio = '';
     this.successo = false;
 
-    if (!this.titolo || !this.descrizione || !this.idQuartiere || !this.allegato) {
-      this.messaggio = 'Tutti i campi e l\'allegato sono obbligatori.';
+    if (!this.titolo || !this.descrizione || !this.idQuartiere) {
+      this.messaggio = 'Titolo, descrizione e quartiere sono obbligatori.';
       return;
     }
 
-    const formData = new FormData();
-    formData.append('titolo', this.titolo);
-    formData.append('descrizione', this.descrizione);
-    formData.append('id_quartiere', this.idQuartiere);
-    formData.append('allegato', this.allegato);
-
-    this.api.inviaSegnalazione(formData).subscribe({
+    this.api.inviaSegnalazione({
+      titolo: this.titolo,
+      descrizione: this.descrizione,
+      id_quartiere: Number(this.idQuartiere),
+    }).subscribe({
       next: () => {
         this.successo = true;
         this.messaggio = 'Segnalazione inserita con successo!';
@@ -104,11 +87,6 @@ export class InserisciSegnalazioneComponent {
     this.titolo = '';
     this.descrizione = '';
     this.idQuartiere = '';
-    this.allegato = null;
-    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
-    if (fileInput) {
-      fileInput.value = '';
-    }
   }
 }
 
