@@ -148,7 +148,10 @@ def registrazione():
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json(silent=True) or {}
-    email, pwd = data.get('email'), data.get('password')
+    email = str(data.get('email', '')).strip().lower()
+    pwd = data.get('password', '')
+    if not email or not isinstance(pwd, str) or not pwd:
+        return jsonify({"errore": "Email o password non valide"}), 401
     conn = get_db_connection()
     if conn is None:
         return jsonify({"errore": "Database non disponibile"}), 503
