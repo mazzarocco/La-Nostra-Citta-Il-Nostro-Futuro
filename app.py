@@ -12,7 +12,15 @@ from flask_cors import CORS
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+allowed_origins = {
+    origin.strip()
+    for origin in os.environ.get(
+        'FRONTEND_ORIGINS',
+        'http://localhost:4200,http://127.0.0.1:4200'
+    ).split(',')
+    if origin.strip()
+}
+CORS(app, resources={r"/api/*": {"origins": sorted(allowed_origins)}})
 IS_PRODUCTION = os.environ.get('APP_ENV', '').lower() == 'production' or os.environ.get('VERCEL') == '1'
 JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY')
 if IS_PRODUCTION and not JWT_SECRET_KEY:

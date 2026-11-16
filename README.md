@@ -40,9 +40,29 @@ DB_USER=<utente MySQL Aiven>
 DB_PASSWORD=<password MySQL Aiven>
 DB_NAME=<database MySQL Aiven>
 DB_SSL_CA_CONTENT=<certificato CA Aiven completo>
+FRONTEND_ORIGINS=https://<dominio-frontend-vercel>,http://localhost:4200
 ```
 
+`FRONTEND_ORIGINS` contiene gli origin autorizzati separati da virgola. In produzione inserisci il dominio pubblico del frontend; `localhost` serve solo per lo sviluppo locale.
+
 Le registrazioni e le segnalazioni non richiedono allegati. I documenti d'identita non vengono richiesti, salvati o verificati in questa versione dimostrativa.
+
+## Deploy pubblico completo su Vercel
+
+Servono due progetti Vercel collegati allo stesso repository:
+
+1. **Backend**: root directory `/`, framework Python/Flask, con le variabili sopra indicate.
+2. **Frontend**: root directory `la-nostra-citta-frontend`, framework Angular, build command `npm run build` e output directory `dist/la-nostra-citta-frontend/browser`.
+
+Il frontend inoltra automaticamente le richieste `/api/*` all'URL del backend definito in [la-nostra-citta-frontend/vercel.json](la-nostra-citta-frontend/vercel.json). Se l'URL del progetto backend cambia, aggiorna il campo `destination` prima del deploy.
+
+Il database deve essere inizializzato una sola volta su Aiven:
+
+```bash
+mysql -h "$DB_HOST" -P "${DB_PORT:-3306}" -u "$DB_USER" -p "$DB_NAME" < schema.sql
+```
+
+Dopo i deploy, verifica `https://<backend-vercel>/` e poi apri `https://<frontend-vercel>/`. Le chiamate del browser devono rimanere relative a `/api`; non inserire credenziali o certificati nel repository.
 
 ## Avvio frontend
 
