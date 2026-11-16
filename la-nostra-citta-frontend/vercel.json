@@ -1,9 +1,11 @@
 
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "angular",
   "buildCommand": "npm run build",
   "outputDirectory": "dist/la-nostra-citta-frontend/browser",
+  "env": {
+    "NODE_ENV": "production"
+  },
   "rewrites": [
     {
       "source": "/api/:path*",
